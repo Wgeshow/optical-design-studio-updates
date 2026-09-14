@@ -1,9 +1,9 @@
-"""Authenticated, read-only GitHub release checks and verified package downloads.
+"""Anonymous, read-only GitHub release checks and verified package downloads.
 
-This module never installs or executes a downloaded package. Tokens are provided
-by the caller and retained in memory only. Production requests use system TLS
-verification and an opener that disables automatic redirects, so credentials
-cannot follow the signed asset URL to a different host.
+This module never installs or executes a downloaded package and never reads or
+sends account credentials. Production requests use system TLS verification and
+an opener that disables automatic redirects, so every download address is checked
+before the next request.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
-REPOSITORY = "Wgeshow/optical-design-studio-updates"
+REPOSITORY = "Wgeshow/optical-design-studio-downloads"
 REPOSITORY_URL = f"https://github.com/{REPOSITORY}"
 _API_ROOT = "https://api.github.com"
 _REPO_PATH = f"/repos/{REPOSITORY}"
@@ -38,7 +38,6 @@ _PACKAGE_TEMPLATES = {
 _VERSION_RE = re.compile(r"v?(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\Z")
 _DIGEST_RE = re.compile(r"sha256:([0-9a-fA-F]{64})\Z")
 _HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
-_LOGIN_RE = re.compile(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\Z")
 _MAX_PACKAGE_BYTES = 8 * 1024**3
 _MAX_JSON_BYTES = 8 * 1024**2
 _MAX_PAGES = 100
@@ -75,6 +74,7 @@ class ReleaseInfo:
 @dataclass(frozen=True)
 class CheckResult:
     status: str
+    # Kept for compatibility with saved results; anonymous checks leave it empty.
     username: str
     release: ReleaseInfo | None
     checked_at: str
@@ -113,34 +113,30 @@ def _read_available(response, size):
 
 
 class GitHubUpdateClient:
-    """Use a user's token to access this application's private repository.
+    """Read this application's public downloads repository without signing in.
 
     An optional test opener implements ``open(request, timeout=seconds)`` and
     must return redirects without following them, as the production opener does.
     ``progress(done, total)`` is called on the caller's thread.
     """
 
-    def __init__(self, token, timeout=15, opener=None):
-        token = token.strip() if isinstance(token, str) else ""
-        if not token or len(token) > 2048 or any(ord(char) < 33 or ord(char) > 126 for char in token):
-            raise UpdateError("authentication", "Enter a valid GitHub access token.")
+    def __init__(self, timeout=15, opener=None):
         try:
             self.timeout = float(timeout)
         except (TypeError, ValueError):
             raise UpdateError("configuration", "The update request timeout is invalid.") from None
         if not math.isfinite(self.timeout) or not 0 < self.timeout <= 120:
             raise UpdateError("configuration", "The update request timeout is invalid.")
-        self._token = token
         self._opener = opener if opener is not None else build_opener(_NoRedirect())
 
-    def _request(self, url, *, authenticated, accept):
+    def _request(self, url, *, api_request, accept):
         parts = urlsplit(url)
         if (parts.scheme != "https" or parts.username or parts.password
                 or parts.fragment or parts.port not in (None, 443)):
             raise UpdateError("unsafe_url", "The update service returned an unsafe download address.")
-        if authenticated:
+        if api_request:
             allowed = (parts.hostname == "api.github.com" and (
-                parts.path == "/user" or parts.path == _REPO_PATH
+                parts.path == _REPO_PATH
                 or parts.path == f"{_REPO_PATH}/releases"
                 or re.fullmatch(re.escape(_REPO_PATH) + r"/releases/assets/[1-9][0-9]*", parts.path)
             ))
@@ -150,9 +146,8 @@ class GitHubUpdateClient:
             raise UpdateError("unsafe_redirect", "The update service returned an unapproved download host.")
         headers = {"Accept": accept, "User-Agent": "Optical-Design-Studio-Updater",
                    "Accept-Encoding": "identity"}
-        if authenticated:
-            headers.update({"Authorization": f"Bearer {self._token}",
-                            "X-GitHub-Api-Version": "2022-11-28"})
+        if api_request:
+            headers["X-GitHub-Api-Version"] = "2022-11-28"
         return Request(url, headers=headers, method="GET")
 
     def _open(self, request):
@@ -171,17 +166,17 @@ class GitHubUpdateClient:
 
     @staticmethod
     def _http_error(status, headers):
-        if status == 401:
-            return UpdateError("authentication", "GitHub did not accept this access token. Sign in again.")
-        if status == 429 or (status == 403 and headers.get("X-RateLimit-Remaining") == "0"):
-            return UpdateError("rate_limit", "GitHub's request limit was reached. Try again later.")
-        if status in (403, 404):
-            return UpdateError("access_denied", "This account cannot access the private update repository or package. Check its invitation and token permissions.")
+        retry_after = headers.get("Retry-After", "")
+        secondary_limit = isinstance(retry_after, str) and retry_after.strip().isascii() and retry_after.strip().isdigit()
+        if status == 429 or (status == 403 and (headers.get("X-RateLimit-Remaining") == "0" or secondary_limit)):
+            return UpdateError("rate_limit", "GitHub's anonymous request limit was reached. Wait before checking again; no access key is required.")
+        if status in (401, 403, 404):
+            return UpdateError("access_denied", "The public update repository or package is unavailable. Try again later or contact the application publisher.")
         return UpdateError("service", "GitHub could not complete the update request. Try again later.")
 
     def _json(self, path, cancel=None):
         _cancelled(cancel)
-        request = self._request(_API_ROOT + path, authenticated=True,
+        request = self._request(_API_ROOT + path, api_request=True,
                                 accept="application/vnd.github+json")
         response = self._open(request)
         try:
@@ -217,15 +212,11 @@ class GitHubUpdateClient:
             raise UpdateError("configuration", "The installed application version is invalid.")
         if platform_id not in _PACKAGE_TEMPLATES:
             raise UpdateError("unsupported_platform", "Update downloads are not available for this platform.")
-        user = self._json("/user", cancel)
-        if (not isinstance(user, dict) or not isinstance(user.get("login"), str)
-                or len(user["login"]) > 39 or not _LOGIN_RE.fullmatch(user["login"])):
-            raise UpdateError("invalid_response", "GitHub did not return a valid account identity.")
         repository = self._json(_REPO_PATH, cancel)
         if not isinstance(repository, dict) or str(repository.get("full_name", "")).lower() != REPOSITORY.lower():
             raise UpdateError("invalid_response", "GitHub did not return the configured update repository.")
-        if repository.get("private") is not True:
-            raise UpdateError("repository_not_private", "The update repository is no longer private. Contact the application publisher.")
+        if repository.get("private") is not False:
+            raise UpdateError("repository_not_public", "The update repository is not confirmed public. Contact the application publisher.")
         candidates = []
         stable_found = False
         for page in range(1, _MAX_PAGES + 1):
@@ -255,7 +246,7 @@ class GitHubUpdateClient:
             raise UpdateError("listing_limit", "There are too many releases to complete a reliable update check.")
         _cancelled(cancel)
         if not candidates:
-            return CheckResult("no_compatible" if stable_found else "no_releases", user["login"], None, _utc_now())
+            return CheckResult("no_compatible" if stable_found else "no_releases", "", None, _utc_now())
         parsed, release, asset = max(candidates, key=lambda candidate: candidate[0])
         digest = _DIGEST_RE.fullmatch(asset.get("digest", "")) if isinstance(asset.get("digest"), str) else None
         if (asset.get("state") != "uploaded" or not _positive_int(asset.get("id"))
@@ -268,7 +259,7 @@ class GitHubUpdateClient:
                            release.get("body") if isinstance(release.get("body"), str) else "",
                            f"{REPOSITORY_URL}/releases/tag/{release['tag_name']}",
                            asset["id"], asset["name"], asset["size"], digest.group(1).lower())
-        return CheckResult("available" if parsed > installed else "current", user["login"], info, _utc_now())
+        return CheckResult("available" if parsed > installed else "current", "", info, _utc_now())
 
     def _download_response(self, asset_id, cancel):
         asset_path = f"{_REPO_PATH}/releases/assets/{asset_id}"
@@ -276,8 +267,8 @@ class GitHubUpdateClient:
         for _ in range(6):
             _cancelled(cancel)
             parts = urlsplit(url)
-            authenticated = parts.hostname == "api.github.com" and parts.path == asset_path
-            request = self._request(url, authenticated=authenticated, accept="application/octet-stream")
+            api_request = parts.hostname == "api.github.com" and parts.path == asset_path
+            request = self._request(url, api_request=api_request, accept="application/octet-stream")
             response = self._open(request)
             status = self._status(response)
             if status == 200:
@@ -296,7 +287,7 @@ class GitHubUpdateClient:
                 # Validate before the next request, including the final redirect.
                 next_parts = urlsplit(url)
                 api_asset = next_parts.hostname == "api.github.com" and next_parts.path == asset_path
-                self._request(url, authenticated=api_asset, accept="application/octet-stream")
+                self._request(url, api_request=api_asset, accept="application/octet-stream")
             except ValueError:
                 raise UpdateError("unsafe_redirect", "The update service returned an invalid redirect.") from None
         raise UpdateError("redirect_limit", "The update download redirected too many times.")

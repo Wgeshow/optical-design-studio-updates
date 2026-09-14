@@ -69,7 +69,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
 WelcomeLabel1=Install Optical Design Studio
-WelcomeLabel2=This installs Optical Design Studio, its simulation engine, machine-learning tools, and the included material and results library.%n%nNo separate Python or Conda installation or internet connection is required.%n%nClick Next to choose the installation folder.
+WelcomeLabel2=This installs Optical Design Studio, its simulation engine, and machine-learning tools.%n%nNo separate Python or Conda installation or internet connection is required.%n%nYour saved work remains in your Windows user profile. Click Next to choose the installation folder.
 SelectDirDesc=Where should Optical Design Studio be installed?
 SelectDirLabel3=Choose a folder for the application and all of its runtime files.%n%nSaved work is kept separately in your Windows user profile, including after updates or uninstalling.
 

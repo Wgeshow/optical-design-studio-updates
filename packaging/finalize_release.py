@@ -1,5 +1,6 @@
 """Publish a verified installer to the local deliverables folder, never online."""
 import hashlib
+import argparse
 import json
 from pathlib import Path
 import shutil
@@ -7,6 +8,7 @@ import struct
 
 from verify_frozen import pe_machine
 from build_version import release_info
+from public_profile import assert_empty_seed
 
 ROOT = Path(__file__).resolve().parent
 
@@ -42,6 +44,10 @@ def icon_check(executable):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fresh-runtime-report', type=Path,
+                        help='Required for public delivery: passed frozen test from a fresh empty library.')
+    args = parser.parse_args()
     info = release_info()
     version = info['version']
     filename = f'OpticalDesignStudio-Setup-{version}-Windows-x64.exe'
@@ -57,6 +63,19 @@ def main():
     manifest = json.loads((payload / 'PAYLOAD-MANIFEST.json').read_text(encoding='utf-8'))
     assert manifest['version'] == version
     assert manifest['build_date'] == info['build_date']
+    public = manifest.get('delivery_profile') == 'public'
+    fresh_runtime = None
+    if public:
+        assert_empty_seed(payload/'_internal'/'seed_library.zip')
+        if args.fresh_runtime_report is None:
+            raise ValueError('Public delivery requires --fresh-runtime-report from verify_frozen --expect-empty-library.')
+        fresh_runtime = json.loads(args.fresh_runtime_report.read_text(encoding='utf-8'))
+        library_check = fresh_runtime.get('checks', {}).get('bundled_library', {})
+        if (not fresh_runtime.get('passed') or fresh_runtime.get('version') != version
+                or not fresh_runtime.get('frozen')
+                or Path(fresh_runtime.get('executable', '')).resolve() != (payload/'Optical Design Studio.exe').resolve()
+                or not library_check.get('passed') or not library_check.get('detail', {}).get('empty_library_verified')):
+            raise ValueError('Public delivery needs a passed current-version frozen test with an empty initial library.')
     for executable in (installer, payload / 'Optical Design Studio.exe', payload / 'OpticalDesignBackend.exe'):
         assert pe_machine(executable) == 0x8664, executable
     icon = icon_check(payload / 'Optical Design Studio.exe')
@@ -75,6 +94,8 @@ def main():
     evidence.mkdir(exist_ok=True)
     stable_runtime = evidence / 'installed-runtime.json'
     stable_runtime.write_text(json.dumps(runtime, indent=2), encoding='utf-8')
+    if fresh_runtime is not None:
+        (evidence/'fresh-runtime.json').write_text(json.dumps(fresh_runtime, indent=2), encoding='utf-8')
     verification['checks']['installed_runtime_without_developer_paths']['detail']['report'] = str(stable_runtime)
     stable_installer_report = evidence / 'installer-verification.json'
     stable_installer_report.write_text(json.dumps(verification, indent=2), encoding='utf-8')
@@ -96,7 +117,10 @@ def main():
     checks = verification['checks']
     release = dict(**info, installer=str(target), bytes=target.stat().st_size, sha256=checksum,
                    architecture='Windows x64 (AMD64)', signed=False, online_updates_enabled=True,
-                   update_mode='User-requested authenticated check and download; installer is run manually',
+                   delivery_profile='public' if public else 'private',
+                   update_mode=('User-requested authenticated check and download; installer is run manually'
+                                if manifest['updates']['authenticated_check'] else
+                                'User-requested public check and download; installer is run manually'),
                    automatic_update_installation=False, updates=manifest['updates'],
                    upgraded_from_version=previous_version if verification.get('previous_installer') else None,
                    included_saved_entries=manifest['build_input']['seed_runs'],
@@ -107,6 +131,9 @@ def main():
                    uninstall_saved_files_unchanged=checks['uninstall_preserves_user_data_and_untracked_files']['detail']['saved_data_files_unchanged'],
                    runtime_report=str(stable_runtime), installer_report=str(stable_installer_report),
                    icon_verification=icon, guide=str(guide))
+    if public:
+        release['public_privacy_checks'] = manifest['public_privacy_checks']
+        release['fresh_empty_library_report'] = str(evidence/'fresh-runtime.json')
     text = json.dumps(release, indent=2)
     latest = ROOT.parent / 'OPTICAL_DESIGN_STUDIO_RELEASE.json'
     if latest.is_file():

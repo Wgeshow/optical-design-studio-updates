@@ -176,7 +176,8 @@ def main():
     parser.add_argument('--expected-version',
                         help='Expected new manifest, executable, and registry version in --previous-installer mode.')
     parser.add_argument('--cpu-only', action='store_true', help='Skip the GPU check on computers without NVIDIA hardware.')
-    parser.add_argument('--minimum-saved', type=int, default=97)
+    parser.add_argument('--minimum-saved', type=int,
+                        help='Defaults to each installed package seed count, including an older release.')
     args = parser.parse_args()
     args.expected_version = args.expected_version or release_info()['version']
     if os.name != 'nt':
@@ -305,8 +306,9 @@ def main():
         def verify_runtime(phase):
             # Reuse this exact output directory: verify_frozen always places its
             # isolated library at output/User Data, including across versions.
-            command = [sys.executable, str(ROOT / 'verify_frozen.py'), str(application), str(frozen_output),
-                       '--minimum-saved', str(args.minimum_saved)]
+            command = [sys.executable, str(ROOT / 'verify_frozen.py'), str(application), str(frozen_output)]
+            if args.minimum_saved is not None:
+                command.extend(['--minimum-saved', str(args.minimum_saved)])
             if not args.cpu_only:
                 command.append('--gpu')
             receipt = contained(application_directory / 'installation.json')

@@ -1,27 +1,77 @@
-# About and private updates
+# About and public updates
 
-Version 1.0.2 adds **About** to the desktop sidebar. It shows the installed version, actual installation/update date when recorded, platform, last check time, and private release status. **File → Open project / Save project** and **Ctrl+O / Ctrl+S** remain available; duplicate title-bar buttons were removed.
-
-## Connect this computer
-
-Open **About → Connect GitHub**. Enter your own GitHub personal access token with access to `Wgeshow/optical-design-studio-updates`. For the repository owner, use a fine-grained token limited to this repository with **Contents: Read-only**. Existing browser sign-in does not connect the native application.
-
-GitHub currently does not support fine-grained tokens for outside/repository collaborators in all cases. An invited collaborator needs a supported token for their account, or a future GitHub App connection. A classic token's `repo` scope is broader than one repository; do not describe it as read-only. Never share the owner's token. No UTA Students organization access is required or configured for this personal repository. [GitHub token documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
-
-Leave **Remember on this computer** unchecked for session-only access. When selected, Windows stores the token in the signed-in user's Credential Manager. Linux/macOS can use an installed supported system keyring; without one, use session access. Tokens are never stored in project files, research libraries, shared exports or application source. **Disconnect** removes remembered application access where available.
+Version 1.0.3 checks and downloads releases without a GitHub account, access key,
+token, or sign-in. Open **About → Check for updates**. About also shows the
+installed version, recorded installation/update date, platform, and last check.
 
 ## Check and download
 
-**Check for updates** checks the configured private repository on demand. It ignores draft and pre-release builds, compares numeric version tags and selects the matching platform package. No automatic startup checks run. Empty releases, incompatible packages, missing permissions, offline connections and invalid metadata are reported separately; none is called “up to date.”
+The public update endpoint is
+[Wgeshow/optical-design-studio-downloads](https://github.com/Wgeshow/optical-design-studio-downloads).
+Anyone can access its published installer assets. The desktop app sends no
+authorization header, reads no saved GitHub credentials, and does not contact
+the private development repository. Browser sign-in is not required.
 
-**Download update** appears beside Check only for a newer compatible release. Choose the folder, follow progress, or cancel. A completed download must match GitHub's authenticated SHA-256 digest and file size. The application preserves files already in the selected folder and offers **Open download folder** after success. Run the installer yourself when ready. No automatic installation, process replacement or rollback is included in this version.
+Checks run only when requested. The client verifies the expected public
+repository, ignores drafts and pre-releases, compares numeric versions, and
+selects the matching platform package. Empty releases, incompatible packages,
+offline connections, GitHub rate limits, and invalid metadata have separate
+statuses; none is reported as up to date.
 
-Simulation and optimization can continue while checks/downloads run. Closing the application cancels an active update request and waits for its worker to finish before saving and closing.
+**Download update** appears beside Check when a newer compatible package is
+available. Choose a destination folder, follow progress, or cancel. HTTPS,
+GitHub's published SHA-256 asset digest, and the expected file size protect
+download integrity. Existing files in the destination are preserved. The app
+offers **Open download folder** after success; run the installer when ready.
+This release does not install updates or restart the application automatically.
 
-## Publish stable and experimental versions
+Simulation and optimization can continue during checks and downloads. Closing
+the application cancels an active update request and waits for the worker to
+finish before saving and closing. Existing project/material/results libraries
+remain local and are not uploaded by the updater.
 
-The personal private repository is https://github.com/Wgeshow/optical-design-studio-updates . `main` holds stable source; `test` is for experimental changes. Test a change there, open a pull request into `main`, and publish a stable release only after validation. Mark experimental releases as **pre-release** so the application does not offer them.
+Versions 1.0.2 and earlier need an installer upgrade to receive this public,
+key-free updater. This version does not use or delete credentials remembered by
+an older version. Users can remove an old OpticalDesignStudio/GitHub entry from
+Windows Credential Manager themselves if one was previously saved.
 
-Use numeric stable tags such as `v1.0.2`. Windows x64 installer filenames must be `OpticalDesignStudio-Setup-1.0.2-Windows-x64.exe`, with the same version in the tag and executable metadata. Attach the source archive and checksum files as additional release assets. GitHub must provide a valid SHA-256 asset digest before the download button is offered. A checksum verifies transport/file integrity; it is not an independent publisher signature.
+## Separate public downloads and private development
 
-Source compatibility includes Windows and Linux. The released installer is Windows x64; a Linux update requires its own tested package. Personal repository collaborators have write access, so do not promise download-only roles for invitations. Any future account/permission changes need to remain under the user's personal account unless separately authorized.
+GitHub visibility applies to an entire repository. A branch cannot be public
+inside a private repository. Therefore the two repositories have different roles:
+
+- **Public downloads:** `Wgeshow/optical-design-studio-downloads` contains release
+  instructions, installer assets, and checksums. Its Git history does not
+  contain the application development tree.
+- **Private development:** `Wgeshow/optical-design-studio-updates` contains the
+  application source, tests, build recipes, and development history. Use `test`
+  for experiments and pull requests into `main` for stable changes.
+
+Keeping a GitHub repository private does not make files bundled inside a public
+installer private. The current GPL PyQt6/S4 distribution includes corresponding
+readable source and third-party notices. Public packaging excludes research
+libraries, credentials, local session files, and machine-specific build reports.
+Do not publish a package until its source/data contents have been reviewed for
+the intended distribution. No organization is used for either repository.
+
+## Publish a release
+
+1. Develop on `test`, run relevant tests, then review and merge into private `main`.
+2. Update `APP_VERSION` and `BUILD_DATE` in `app_version.py`. Build and verify a
+   public-profile installer from that reviewed source. Preserve the Inno AppId
+   so an upgrade retains the installation and user library.
+3. Save the matching full source archive and development tag in the private
+   repository. Do not upload the private source archive to the public repository.
+4. Create a public draft with a numeric stable tag such as `v1.0.3`, attach the
+   tested installer and its checksum, and publish after reviewing the assets.
+   Experimental builds must be marked pre-release.
+
+Windows x64 assets must use exactly
+`OpticalDesignStudio-Setup-<version>-Windows-x64.exe`, with the same version in
+the release tag and executable metadata. GitHub must provide a SHA-256 digest
+for the asset before the application offers it. Checksums verify file integrity;
+they are not independent publisher signatures.
+
+The Windows installer is x64. Linux requires its own native build and tested
+package; Windows binaries do not run natively on Linux. Updater tests on Linux
+do not constitute verification of the native Linux optical solver or installer.

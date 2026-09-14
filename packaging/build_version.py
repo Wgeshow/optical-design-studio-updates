@@ -56,3 +56,21 @@ def write_build_metadata(source: Path, destination: Path = ROOT) -> dict[str, st
         '; Generated from app_version.py by prepare_payload.py.\n'
         f'#define Version "{version}"\n', encoding='utf-8')
     return info
+
+
+def update_info(source: Path) -> dict:
+    """Read the compiled updater target independently of research-data delivery."""
+    path = Path(source)/'update_client.py'
+    repository = None
+    for node in ast.parse(path.read_text(encoding='utf-8'), filename=str(path)).body:
+        if isinstance(node, ast.Assign) and any(isinstance(name, ast.Name) and name.id == 'REPOSITORY'
+                                               for name in node.targets):
+            repository = ast.literal_eval(node.value)
+    targets = {'Wgeshow/optical-design-studio-updates': True,
+               'Wgeshow/optical-design-studio-downloads': False}
+    if repository not in targets:
+        raise ValueError('Review the updater authentication metadata for this repository before packaging.')
+    private = targets[repository]
+    return {'repository': repository, 'private': private, 'authenticated_check': private,
+            'authenticated_download': private, 'automatic_check': False,
+            'automatic_install': False, 'release_channel': 'stable'}

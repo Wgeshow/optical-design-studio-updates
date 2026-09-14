@@ -9,6 +9,7 @@ import stat
 import zipfile
 
 from build_version import release_info, write_build_metadata
+from public_profile import assert_empty_seed, validate_public_source
 
 ROOT = Path(__file__).resolve().parent
 SOURCE_FOLDERS = {'pcs_s4_runtime', 'ml_dependencies', 'S4-source', 'third-party-licenses', 'tests'}
@@ -17,11 +18,26 @@ SOURCE_SUFFIXES = {'.py', '.cmd', '.sh', '.txt', '.md', '.json', '.ps1', '.yml',
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
-    parser.add_argument('--bundle', type=Path, required=True)
+    parser.add_argument('--bundle', type=Path, help='Optional source/runtime snapshot; required for private library delivery.')
+    parser.add_argument('--profile', choices=('private', 'public'), default='private')
+    parser.add_argument('--public-source', type=Path, help='Separately reviewed readable application/native source tree for public delivery.')
     args = parser.parse_args()
+    if args.profile == 'private' and args.bundle is None:
+        parser.error('--bundle is required for the private library profile.')
+    if args.profile == 'public' and args.public_source is None:
+        parser.error('--public-source is required for the public profile.')
     # Check the authoritative release constants before changing build staging.
     release = release_info(args.source)
     build = ROOT / 'build_input'
+    if args.source.resolve().is_relative_to(build.resolve()):
+        raise ValueError('Build source cannot be inside the generated staging folder.')
+    reviewed = None
+    if args.profile == 'public':
+        if args.public_source.resolve().is_relative_to(build.resolve()):
+            raise ValueError('Reviewed public source cannot be inside generated staging.')
+        reviewed = validate_public_source(args.public_source)
+        if release_info(args.public_source) != release:
+            raise ValueError('Reviewed readable source does not match the application release version/date.')
     # Never retain obsolete application files between releases. This target is
     # fixed to this builder's own workspace, never derived from user input.
     if build.exists():
@@ -41,25 +57,33 @@ def main():
     source = build / 'source'
     source.mkdir(parents=True, exist_ok=True)
     seed_manifest = {'format': 's4-library', 'version': 1, 'files': {}}
-    with zipfile.ZipFile(args.bundle) as bundle, zipfile.ZipFile(build/'seed_library.zip', 'w', zipfile.ZIP_DEFLATED) as seed:
-        manifest = json.loads(bundle.read('s4-library-manifest.json'))
-        if manifest.get('format') != 's4-library' or manifest.get('version') != 1:
-            raise ValueError('Export a valid library bundle from Saved work first.')
-        for name, record in manifest['files'].items():
-            path = PurePosixPath(name)
-            if path.is_absolute() or '..' in path.parts or '\\' in name or ':' in name:
-                raise ValueError(f'Unsafe archive path: {name}')
-            data = bundle.read(name)
-            if len(data) != record['size'] or hashlib.sha256(data).hexdigest() != record['sha256']:
-                raise ValueError(f'Bundle integrity failure: {name}')
-            if path.parts[0] in {'runs', 'data_library'}:
-                seed.writestr(name, data)
-                seed_manifest['files'][name] = record
-            elif path.parts[0] in SOURCE_FOLDERS or (len(path.parts) == 1 and path.suffix.lower() in SOURCE_SUFFIXES):
-                target = source.joinpath(*path.parts)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(data)
+    with zipfile.ZipFile(build/'seed_library.zip', 'w', zipfile.ZIP_DEFLATED) as seed:
+        if args.bundle is not None:
+            with zipfile.ZipFile(args.bundle) as bundle:
+                manifest = json.loads(bundle.read('s4-library-manifest.json'))
+                if manifest.get('format') != 's4-library' or manifest.get('version') != 1:
+                    raise ValueError('Export a valid library bundle from Saved work first.')
+                for name, record in manifest['files'].items():
+                    path = PurePosixPath(name)
+                    if path.is_absolute() or '..' in path.parts or '\\' in name or ':' in name:
+                        raise ValueError(f'Unsafe archive path: {name}')
+                    data = bundle.read(name)
+                    if len(data) != record['size'] or hashlib.sha256(data).hexdigest() != record['sha256']:
+                        raise ValueError(f'Bundle integrity failure: {name}')
+                    if path.parts[0] in {'runs', 'data_library'}:
+                        if args.profile == 'private':
+                            seed.writestr(name, data)
+                            seed_manifest['files'][name] = record
+                    elif path.parts[0] in SOURCE_FOLDERS or (len(path.parts) == 1 and path.suffix.lower() in SOURCE_SUFFIXES):
+                        target = source.joinpath(*path.parts)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(data)
         seed.writestr('s4-library-manifest.json', json.dumps(seed_manifest, indent=2))
+    if args.profile == 'public':
+        assert_empty_seed(build/'seed_library.zip')
+        shutil.copytree(args.public_source, build/'public_source')
+        if validate_public_source(build/'public_source') != reviewed:
+            raise ValueError('Reviewed source changed while staging the public build.')
     # Current source takes precedence over the snapshot used for the shared data.
     for item in args.source.iterdir():
         if item.is_file() and item.suffix.lower() in SOURCE_SUFFIXES:
@@ -95,11 +119,14 @@ def main():
             raise FileNotFoundError(f'Download the pinned NVIDIA wheels first: {gpu/name}')
     if write_build_metadata(source) != release:
         raise ValueError('Release constants changed during payload preparation.')
-    summary = {**release, 'source': str(args.source.resolve()), 'data_bundle': str(args.bundle.resolve()),
-               'data_bundle_sha256': hashlib.sha256(args.bundle.read_bytes()).hexdigest(),
+    summary = {**release, 'profile': args.profile, 'source': str(args.source.resolve()),
+               'data_bundle': str(args.bundle.resolve()) if args.bundle else None,
+               'data_bundle_sha256': hashlib.sha256(args.bundle.read_bytes()).hexdigest() if args.bundle else None,
                'seed_files': len(seed_manifest['files']),
                'seed_runs': len({PurePosixPath(n).parts[1] for n in seed_manifest['files'] if n.startswith('runs/')}),
                'seed_presets': sum(n.startswith('data_library/presets/') for n in seed_manifest['files'])}
+    if reviewed is not None:
+        summary['public_source_tree_sha256'] = reviewed['tree_sha256']
     (build/'build_input.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
     print(json.dumps(summary, indent=2))
 
