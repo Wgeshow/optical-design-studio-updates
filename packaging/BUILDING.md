@@ -1,5 +1,11 @@
 Build on 64-bit Windows using Python 3.12 and the application's pinned dependencies. The native S4 extension requires the matching MKL 2023.1 DLLs in the build interpreter's `Library/bin` folder. PyInstaller 6.22.2 and Inno Setup 7.1.0 were used for this release.
 
+For 1.0.4 portable delivery, use build_portable.py with --source, --bundle and
+--public-source (a reviewed complete source tree), then package_portable.py.
+The portable builder does not run Inno Setup. START_HERE.md describes extracting,
+choosing a data directory, and upgrading without an installer. The ZIP contains
+only inventoried public payload files, never data produced by verification.
+
 1. Keep a verified source/runtime bundle if the complete native build and ML dependency source are not already available locally. A private library export can supply build dependencies; its research data is excluded by the public profile.
 2. Keep the current complete application source alongside the export.
 3. Install the Python requirements, including `requirements-desktop.txt`, `requirements-ml.txt`, and PyInstaller, into the build environment.

@@ -6,6 +6,7 @@ import json
 from pathlib import Path, PurePosixPath
 import shutil
 import stat
+import time
 import zipfile
 
 from build_version import release_info, write_build_metadata
@@ -14,6 +15,16 @@ from public_profile import assert_empty_seed, validate_public_source
 ROOT = Path(__file__).resolve().parent
 SOURCE_FOLDERS = {'pcs_s4_runtime', 'ml_dependencies', 'S4-source', 'third-party-licenses', 'tests'}
 SOURCE_SUFFIXES = {'.py', '.cmd', '.sh', '.txt', '.md', '.json', '.ps1', '.yml', '.yaml', '.ico', '.png'}
+
+def copy_current_file(source, target):
+    for attempt in range(6):
+        try:
+            shutil.copy2(source, target)
+            return
+        except PermissionError as exc:
+            if getattr(exc, 'winerror', None) != 32 or attempt == 5:
+                raise RuntimeError(f'Cannot stage {source.name}: {exc}') from exc
+            time.sleep(.5 * (attempt + 1))
 
 def main():
     parser = argparse.ArgumentParser()
@@ -87,7 +98,7 @@ def main():
     # Current source takes precedence over the snapshot used for the shared data.
     for item in args.source.iterdir():
         if item.is_file() and item.suffix.lower() in SOURCE_SUFFIXES:
-            shutil.copy2(item, source/item.name)
+            copy_current_file(item, source/item.name)
         elif item.is_dir() and item.name in SOURCE_FOLDERS:
             shutil.copytree(item, source/item.name, dirs_exist_ok=True,
                             ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.git'))

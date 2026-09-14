@@ -46,6 +46,8 @@ def main():
     copy_tree(readable, PAYLOAD/'_internal'/'source')
     shutil.copy2(ROOT/'build_input'/'S4_Studio.ico', PAYLOAD/'S4_Studio.ico')
     shutil.copy2(ROOT/'INSTALLATION.md', PAYLOAD/'INSTALLATION.md')
+    if (ROOT/'PORTABLE.md').is_file():
+        shutil.copy2(ROOT/'PORTABLE.md', PAYLOAD/'START_HERE.md')
     if not public:
         rebuild = PAYLOAD/'_internal'/'source'/'packaging'
         rebuild.mkdir(exist_ok=True)
