@@ -52,13 +52,58 @@ def library_root(argv=None):
     configured = os.environ.get('S4_LIBRARY_ROOT')
     if configured:
         return Path(configured).expanduser().resolve()
+    saved = saved_data_directory()
+    if saved is not None:
+        return saved
     if not getattr(sys, 'frozen', False):
         return resource_root()
-    if os.name == 'nt':
-        base = Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local')
-    else:
-        base = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local' / 'share')
-    return (base / 'Optical Design Studio' / 'User Data').resolve()
+    return default_data_directory()
+
+
+def default_data_directory():
+    return (application_root() / 'User Data').resolve()
+
+
+def saved_data_directory():
+    path = application_root() / 'portable_settings.json'
+    if not path.exists():
+        return None
+    try:
+        if path.stat().st_size > 8192:
+            raise ValueError('Settings file is too large.')
+        data = json.loads(path.read_text(encoding='utf-8'))
+        value = data['data_directory']
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError('Invalid data directory.')
+        directory = Path(value).expanduser()
+        return (directory if directory.is_absolute() else application_root()/directory).resolve()
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError('Cannot read portable_settings.json beside the application: ' + str(exc)) from exc
+
+
+def save_data_directory(directory=None):
+    """Persist the next-launch directory without moving or replacing saved work."""
+    directory = default_data_directory() if directory is None else Path(directory).expanduser().resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryFile(dir=directory) as probe:
+        probe.write(b'Optical Design Studio write check')
+        probe.flush()
+    # Relative default lets the whole portable folder move between computers.
+    value = 'User Data' if directory == default_data_directory() else str(directory)
+    target = application_root()/'portable_settings.json'
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=target.parent,
+                                         prefix='.storage-', suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump({'version': 1, 'data_directory': value}, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    return directory
 
 
 @contextmanager

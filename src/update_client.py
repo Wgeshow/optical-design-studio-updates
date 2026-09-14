@@ -35,6 +35,7 @@ _PACKAGE_TEMPLATES = {
     "linux-x64": "OpticalDesignStudio-{version}-Linux-x64.tar.gz",
     "linux-arm64": "OpticalDesignStudio-{version}-Linux-arm64.tar.gz",
 }
+_WINDOWS_PORTABLE = 'OpticalDesignStudio-Portable-{version}-Windows-x64.zip'
 _VERSION_RE = re.compile(r"v?(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\Z")
 _DIGEST_RE = re.compile(r"sha256:([0-9a-fA-F]{64})\Z")
 _HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -231,13 +232,19 @@ class GitHubUpdateClient:
                     continue
                 stable_found = True
                 version = ".".join(map(str, parsed))
-                expected = _PACKAGE_TEMPLATES[platform_id].format(version=version)
+                expected = [_PACKAGE_TEMPLATES[platform_id].format(version=version)]
+                if platform_id == 'windows-x64':
+                    expected.insert(0, _WINDOWS_PORTABLE.format(version=version))
                 assets = release.get("assets")
                 if not isinstance(assets, list):
                     raise UpdateError("invalid_response", "GitHub returned invalid release assets.")
-                matches = [asset for asset in assets if isinstance(asset, dict) and asset.get("name") == expected]
-                if len(matches) > 1:
-                    raise UpdateError("invalid_response", "The release contains ambiguous update packages.")
+                matches = []
+                for name in expected:
+                    same_name = [asset for asset in assets if isinstance(asset, dict) and asset.get('name') == name]
+                    if len(same_name) > 1:
+                        raise UpdateError('invalid_response', 'The release contains ambiguous update packages.')
+                    if same_name and not matches:
+                        matches = same_name
                 if matches:
                     candidates.append((parsed, release, matches[0]))
             if len(releases) < _PAGE_SIZE:
@@ -299,6 +306,7 @@ class GitHubUpdateClient:
         if release.version != ".".join(map(str, _version(release.version))) or _version(release.tag) != _version(release.version):
             raise UpdateError("invalid_asset", "The update package version does not match its release tag.")
         allowed_names = {template.format(version=release.version) for template in _PACKAGE_TEMPLATES.values()}
+        allowed_names.add(_WINDOWS_PORTABLE.format(version=release.version))
         if (release.asset_name not in allowed_names or not _positive_int(release.asset_id)
                 or not _positive_int(release.asset_size) or release.asset_size > _MAX_PACKAGE_BYTES
                 or not isinstance(release.sha256, str) or not _HASH_RE.fullmatch(release.sha256)):

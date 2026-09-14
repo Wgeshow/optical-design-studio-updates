@@ -1,5 +1,13 @@
 # About and public updates
 
+Version 1.0.4 prefers portable Windows ZIP assets. Extract the complete downloaded
+ZIP and run Optical Design Studio.exe. Preserve User Data and portable_settings.json
+when replacing the app, or point Settings → Data output folder to your existing
+library after extracting into a new folder. The app does not extract or install
+updates automatically. Versions through 1.0.3 need a one-time manual ZIP download
+because their updater only recognizes Windows installer assets. The following
+installer workflow describes the older releases; integrity checks still apply.
+
 Version 1.0.3 checks and downloads releases without a GitHub account, access key,
 token, or sign-in. Open **About → Check for updates**. About also shows the
 installed version, recorded installation/update date, platform, and last check.

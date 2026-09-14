@@ -889,6 +889,17 @@ class SettingsPage(_RunPage):
         super().__init__(store, 'Solver settings', 'Configure accuracy and parallel execution, and verify that the selected runtime communicates with the GPU.', {'diagnostic'}, parent)
         left, right = QWidget(), QWidget()
         controls, details = QVBoxLayout(left), QVBoxLayout(right)
+        from desktop_runtime import default_data_directory, saved_data_directory
+        self.data_directory = QLineEdit(str(saved_data_directory() or default_data_directory()))
+        self.data_directory.setAccessibleName('Data output folder')
+        storage, storage_form = _group('Data output folder', [('Folder for saved data', self.data_directory)])
+        storage_form.addRow(_label('Current folder: ' + str(store.library.root), True))
+        storage_form.addRow(_button('Browse…', self.browse_data_directory))
+        storage_form.addRow(_button('Use folder beside the program', self.default_data_directory))
+        storage_form.addRow(_button('Save data folder', self.save_data_directory))
+        self.storage_note = _label('Changes apply after restarting. Existing data stays in its current folder. Select that folder again to reopen it, or use Saved work to export/import a backup.', True)
+        storage_form.addRow(self.storage_note)
+        details.addWidget(storage)
         self.basis = integer(32, 1, 4096)
         accuracy, form = _group('Accuracy', [('Fourier basis count', self.basis)])
         form.addRow(_label('Larger basis counts can resolve finer features and cost more memory and time. Check convergence before accepting a final Q estimate.', True))
@@ -925,6 +936,25 @@ class SettingsPage(_RunPage):
             _on_edit(widget, self.save_settings)
         store.changed.connect(self.refresh)
         self.refresh()
+
+    def browse_data_directory(self):
+        directory = QFileDialog.getExistingDirectory(self, 'Choose data output folder', self.data_directory.text())
+        if directory:
+            self.data_directory.setText(directory)
+
+    def default_data_directory(self):
+        from desktop_runtime import default_data_directory
+        self.data_directory.setText(str(default_data_directory()))
+
+    def save_data_directory(self):
+        from desktop_runtime import save_data_directory
+        try:
+            if not self.data_directory.text().strip():
+                raise ValueError('Choose a folder first.')
+            target = save_data_directory(self.data_directory.text().strip())
+            self.storage_note.setText(f'Saved. Restart the application to use {target}. Existing data has not been moved.')
+        except Exception as exc:
+            self.storage_note.setText('Could not save the data folder: ' + str(exc))
 
     def refresh(self, *_):
         _set_value(self.basis, self.store.settings.get('NumG', 32))

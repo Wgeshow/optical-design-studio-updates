@@ -1,5 +1,18 @@
 # Optical Design Studio
 
+## Portable ZIP (1.0.4)
+
+Download OpticalDesignStudio-Portable-1.0.4-Windows-x64.zip, extract the entire
+folder and run Optical Design Studio.exe. No installer is needed. Data defaults
+to User Data beside the application. Settings → Data output folder lets you
+browse for another location, save the selection, and restart to use it. Existing
+data is retained in its previous folder; select it to reopen your saved work.
+Keep User Data and portable_settings.json when upgrading to a newer ZIP.
+
+About supports verified public ZIP downloads without a key. Earlier versions
+need this ZIP downloaded once manually because they only recognize installers.
+The older installer instructions below apply to releases through 1.0.3.
+
 ## Windows installer
 
 Run **OpticalDesignStudio-Setup-1.0.3-Windows-x64.exe**, choose an installation

@@ -270,7 +270,8 @@ class AboutPage(QWidget):
         self.check_button.setEnabled(not self.busy)
         self.cancel_button.setEnabled(True)
         self.download_note.setText('Download the update, then choose when to install it.' if can_download else
-            ('The application will not run the installer automatically.' if downloaded else
+            ('Extract the ZIP, then run Optical Design Studio.exe from the extracted folder. Keep your User Data folder and portable_settings.json when updating.' if downloaded and self._downloaded_path.suffix.lower() == '.zip' else
+             'The application will not run the installer automatically.' if downloaded else
              'Your projects, materials and saved results remain in your local library.'))
 
     def check_for_updates(self):
