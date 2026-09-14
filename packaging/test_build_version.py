@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from build_version import release_info, write_build_metadata
+from build_version import release_info, update_info, write_build_metadata
 
 
 class BuildVersionTests(unittest.TestCase):
@@ -32,6 +32,19 @@ class BuildVersionTests(unittest.TestCase):
                         f'APP_VERSION = {version}\nBUILD_DATE = {build_date}\n', encoding='utf-8')
                     with self.assertRaises(ValueError):
                         release_info(path)
+
+    def test_updater_authentication_follows_code_repository_not_data_profile(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            for repo, private in [('optical-design-studio-downloads', False),
+                                  ('optical-design-studio-updates', True)]:
+                (path/'update_client.py').write_text(f'REPOSITORY = "Wgeshow/{repo}"\n', encoding='utf-8')
+                info = update_info(path)
+                self.assertEqual(info['authenticated_check'], private)
+                self.assertEqual(info['authenticated_download'], private)
+            (path/'update_client.py').write_text('REPOSITORY = "unreviewed/repository"\n', encoding='utf-8')
+            with self.assertRaises(ValueError):
+                update_info(path)
 
 
 if __name__ == '__main__':

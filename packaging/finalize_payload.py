@@ -8,7 +8,8 @@ import re
 import shutil
 import sys
 
-from build_version import release_info
+from build_version import release_info, update_info
+from public_profile import assert_empty_seed, public_build_info, validate_public_source
 
 ROOT = Path(__file__).resolve().parent
 PAYLOAD = ROOT/'dist'/'Optical Design Studio'
@@ -32,19 +33,30 @@ def main():
     if not (PAYLOAD/'Optical Design Studio.exe').is_file():
         raise FileNotFoundError('Build the PyInstaller payload first.')
     release = release_info(SOURCE)
-    copy_tree(SOURCE, PAYLOAD/'_internal'/'source')
+    build = json.loads((ROOT/'build_input'/'build_input.json').read_text(encoding='utf-8'))
+    public = build.get('profile') == 'public'
+    readable = ROOT/'build_input'/'public_source' if public else SOURCE
+    if public:
+        assert_empty_seed(PAYLOAD/'_internal'/'seed_library.zip')
+        reviewed = validate_public_source(readable)
+        if reviewed['tree_sha256'] != build['public_source_tree_sha256']:
+            raise ValueError('Reviewed public source changed after payload preparation.')
+        if (PAYLOAD/'_internal'/'source').exists():
+            raise ValueError('Public delivery requires a fresh payload without an old readable source tree.')
+    copy_tree(readable, PAYLOAD/'_internal'/'source')
     shutil.copy2(ROOT/'build_input'/'S4_Studio.ico', PAYLOAD/'S4_Studio.ico')
     shutil.copy2(ROOT/'INSTALLATION.md', PAYLOAD/'INSTALLATION.md')
-    rebuild = PAYLOAD/'_internal'/'source'/'packaging'
-    rebuild.mkdir(exist_ok=True)
-    for path in ROOT.iterdir():
-        if path.is_file() and path.suffix in {'.py', '.ps1', '.spec', '.iss', '.md', '.txt'}:
-            shutil.copy2(path, rebuild/path.name)
-    copy_tree(ROOT/'assets', rebuild/'assets')
-    shutil.copyfile(ROOT/'installation-template.json', rebuild/'installation-template.json')
+    if not public:
+        rebuild = PAYLOAD/'_internal'/'source'/'packaging'
+        rebuild.mkdir(exist_ok=True)
+        for path in ROOT.iterdir():
+            if path.is_file() and path.suffix in {'.py', '.ps1', '.spec', '.iss', '.md', '.txt'}:
+                shutil.copy2(path, rebuild/path.name)
+        copy_tree(ROOT/'assets', rebuild/'assets')
+        shutil.copyfile(ROOT/'installation-template.json', rebuild/'installation-template.json')
     licenses = PAYLOAD/'THIRD_PARTY_LICENSES'
     licenses.mkdir(exist_ok=True)
-    copy_tree(SOURCE/'third-party-licenses', licenses/'S4-and-native-build')
+    copy_tree(readable/'third-party-licenses', licenses/'S4-and-native-build')
     copy_tree(ROOT/'build_input'/'gpu_licenses', licenses/'NVIDIA')
     distributions = {}
     paths = [str(Path(sys.prefix)/'Lib'/'site-packages'), str(SOURCE/'ml_dependencies')]
@@ -84,6 +96,11 @@ def main():
         'PyQt6 is the GPLv3 distribution; Qt and all other components retain their own terms.\n'
         'GPU libraries are NVIDIA redistributables; the NVIDIA display driver is not included.\n'
         'This folder includes notices from the build environment; some packages are build tools only.\n', encoding='utf-8')
+    if public:
+        copied = validate_public_source(PAYLOAD/'_internal'/'source')
+        if copied != reviewed:
+            raise ValueError('Public readable source does not match its reviewed inventory.')
+        assert_empty_seed(PAYLOAD/'_internal'/'seed_library.zip')
     inventory = {}
     files = sorted(path for path in PAYLOAD.rglob('*') if path.is_file() and path.name != 'PAYLOAD-MANIFEST.json')
     print(f'Hashing {len(files)} packaged files...', flush=True)
@@ -97,12 +114,14 @@ def main():
         if number % 1000 == 0:
             print(f'Verified {number}/{len(files)} files', flush=True)
     summary = {**release, 'architecture': 'Windows x64',
-               'updates': {'repository': 'Wgeshow/optical-design-studio-updates',
-                           'private': True, 'authenticated_check': True,
-                           'authenticated_download': True, 'automatic_check': False,
-                           'automatic_install': False, 'release_channel': 'stable'},
-               'build_input': json.loads((ROOT/'build_input'/'build_input.json').read_text()),
+               'delivery_profile': 'public' if public else 'private',
+               'updates': update_info(SOURCE),
+               'build_input': public_build_info(build) if public else build,
                'files': inventory}
+    if public:
+        summary['public_privacy_checks'] = {'seed_empty': True, 'readable_source_reviewed': True,
+                                           'personal_paths_excluded_from_readable_source': True,
+                                           'native_source_and_notices_retained': True}
     (PAYLOAD/'PAYLOAD-MANIFEST.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
     print(json.dumps({'payload': str(PAYLOAD), 'files': len(inventory), 'bytes': sum(v['size'] for v in inventory.values())}, indent=2))
 

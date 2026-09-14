@@ -73,10 +73,12 @@ def inspect_busy_close_guard(window, application):
 
 def run(report_path):
     """Write a machine-readable report and return a conventional exit code."""
+    from app_version import APP_VERSION
     report_path = Path(report_path).resolve()
     report_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     report = dict(
+        version=APP_VERSION,
         started=datetime.now(timezone.utc).isoformat(),
         executable=sys.executable,
         frozen=bool(getattr(sys, 'frozen', False)),
@@ -132,12 +134,15 @@ def run(report_path):
             if len(entries) < minimum:
                 raise AssertionError(f'Expected at least {minimum} bundled entries; found {len(entries)}.')
             assets = list(library.assets.glob('*.csv'))
+            if os.environ.get('S4_SELF_TEST_EXPECT_EMPTY_LIBRARY') == '1' and (entries or presets or assets):
+                raise AssertionError('A fresh public installation contains research runs, presets or material tables.')
             # Validate the saved preset's embedded and managed optical constants.
             for preset in presets.values():
                 materialized = library.materialize(preset['project'])
                 library.snapshot(materialized)
             return dict(saved_entries=len(entries), saved_presets=len(presets),
-                        optical_constant_files=len(assets), root=str(library.root))
+                        optical_constant_files=len(assets), root=str(library.root),
+                        empty_library_verified=os.environ.get('S4_SELF_TEST_EXPECT_EMPTY_LIBRARY') == '1')
 
         check('bundled_library', inspect_library)
 

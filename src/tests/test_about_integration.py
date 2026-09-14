@@ -34,6 +34,10 @@ class AboutIntegrationTests(unittest.TestCase):
         about = window.pages['About']
         self.assertEqual(window.navigation.currentItem().text(), 'About')
         self.assertEqual(about.info['version'], APP_VERSION)
+        self.assertEqual(about.state, 'not_checked')
+        self.assertTrue(about.check_button.isEnabled())
+        self.assertFalse(hasattr(about, '_credentials'))
+        self.assertFalse(hasattr(about, 'account_button'))
         self.assertFalse(hasattr(window.chrome, 'open_button'))
         self.assertFalse(hasattr(window.chrome, 'save_button'))
         entered, released = threading.Event(), threading.Event()
@@ -46,8 +50,7 @@ class AboutIntegrationTests(unittest.TestCase):
                 released.wait(2)
                 raise UpdateCancelled()
 
-        about._client_factory = lambda token: PendingClient()
-        about._token = 'fixture_only'
+        about._client_factory = lambda: PendingClient()
         store._autosave = Mock()
         about.check_for_updates()
         self.assertTrue(entered.wait(2))

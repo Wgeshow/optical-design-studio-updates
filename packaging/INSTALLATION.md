@@ -2,14 +2,14 @@
 
 ## Install
 
-1. Double-click `OpticalDesignStudio-Setup-1.0.2-Windows-x64.exe`.
+1. Double-click `OpticalDesignStudio-Setup-1.0.3-Windows-x64.exe`.
 2. Choose the installation folder. The default is `%LOCALAPPDATA%\Programs\Optical Design Studio`. Choose a folder your Windows account can write to.
 3. Choose whether to create a desktop shortcut, then click **Install**. The wizard shows the required disk space before installation.
 4. Leave **Launch Optical Design Studio** selected and click **Finish**.
 
-The installer includes the application, Python runtime, native S4 simulation engine, PyQt6 interface, machine-learning libraries, material data, and saved results. No separate Python or Conda installation or internet connection is required. The installer uses the existing optical-layer icon and follows the Windows light or dark appearance.
+The installer includes the application, Python runtime, native S4 simulation engine, PyQt6 interface, machine-learning libraries, and built-in material definitions. This public delivery package starts with an empty saved-work library and does not include the publisher's research results or uploaded material tables. No separate Python or Conda installation or internet connection is required. The installer uses the existing optical-layer icon and follows the Windows light or dark appearance.
 
-Version 1.0.2 adds **About** in the navigation sidebar. It shows the application version, release date, last installation/update date, and update status. It supports dark and light modes and keeps the integrated application title bar: **File** contains Open project and Save project, also available with **Ctrl+O** and **Ctrl+S**; View switches appearance. Drag the empty top-bar area to move the window, double-click it to maximize or restore, or drag a window edge to resize. The close button retains the application's session-save and running-calculation checks.
+Version 1.0.3 checks the public download repository without requiring a GitHub account or access token. **About** shows the application version, last installation/update date, and update status. It supports dark and light modes and keeps the integrated application title bar: **File** contains Open project and Save project, also available with **Ctrl+O** and **Ctrl+S**; View switches appearance. Drag the empty top-bar area to move the window, double-click it to maximize or restore, or drag a window edge to resize. The close button retains the application's session-save and running-calculation checks.
 
 This package is for Intel/AMD 64-bit Windows 10 (version 1809 or later) and Windows 11. CPU simulation is available without an NVIDIA GPU. GPU acceleration requires compatible NVIDIA hardware and its NVIDIA driver; the installer does not install a device driver. GPU acceleration applies to supported computations, and the application may also use the CPU.
 
@@ -19,20 +19,20 @@ The installation folder holds the application and its runtime files. Your materi
 
 `%LOCALAPPDATA%\Optical Design Studio\User Data`
 
-The included library is made available at first launch. Updates and uninstalling preserve your saved work. Changing the installation folder does not move or reset that library. Use **Saved work** in the application to export a library bundle for sharing or backup.
+Updates and uninstalling preserve your saved work, including results and material presets from a previous version. Changing the installation folder does not move or reset that library. Use **Saved work** in the application to export a library bundle for sharing or backup.
 
 To upgrade, run the newer installer, choose the existing installation folder, and complete the wizard. The folder chooser remains available on upgrades. Close running simulations before upgrading. To uninstall, use **Settings > Apps > Installed apps > Optical Design Studio > Uninstall** in Windows.
 
 ## Check for a newer release
 
-Updates are hosted in the private [Optical Design Studio repository](https://github.com/Wgeshow/optical-design-studio-updates). The repository owner must grant your GitHub account access. Private release checks and downloads require that account's authorization.
+Updates are hosted in the public [Optical Design Studio downloads repository](https://github.com/Wgeshow/optical-design-studio-downloads). You do not need to sign in. The development repository is separate from the download repository.
 
-1. Open **About** and connect your GitHub access token. Use a fine-grained token restricted to the update repository with **Contents: Read-only** permission. Do not send your token to the publisher or include it in a project or library export.
+1. Open **About**.
 2. Click **Check for updates**. The page displays the result; it does not claim that the program is up to date until a check succeeds. If no stable release has been published, the page reports that status.
 3. When a newer compatible stable release exists, **Download update** appears beside the check button. Select a destination and wait for the download to finish. The app validates the downloaded file against its published SHA-256 digest.
 4. Save your work and finish running calculations. Close Optical Design Studio, then run the downloaded installer and use your existing installation folder.
 
-Windows can remember the token in Windows Credential Manager. The token is not stored with your material library, saved results, or exported source. The update feature checks and downloads only when requested; it does not silently install updates or interrupt calculations. Draft releases and experimental prereleases are excluded from stable update checks. A `test` branch is for development; a change on that branch is not an application update until a release is published.
+The update feature checks and downloads only when requested. It does not use account credentials, silently install updates, upload your library, or interrupt calculations. Draft releases and experimental prereleases are excluded from stable update checks. A `test` branch is for development; a change on that branch is not an application update until a release is published.
 
 The installer writes `installation.json` in the application folder when installation completes. About uses that receipt for the last installation/update date; starting the application does not reset it. A source checkout or an unpacked build without an installer receipt displays release/build information without inventing an installation date.
 
@@ -60,7 +60,7 @@ Compile with Inno Setup 7.1 or later, adjusting paths and the release version:
 & "C:\path\to\ISCC.exe" `
   '/DPayloadDir=C:\build\dist\Optical Design Studio' `
   '/DOutputDir=C:\build\release' `
-  '/DVersion=1.0.2' `
+  '/DVersion=1.0.3' `
   '.\OpticalDesignStudio.iss'
 ```
 

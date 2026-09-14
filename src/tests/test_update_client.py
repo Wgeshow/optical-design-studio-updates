@@ -1,4 +1,4 @@
-"""No-network tests for private release selection and safe update downloads."""
+"""No-network tests for anonymous release selection and safe update downloads."""
 from dataclasses import replace
 from email.message import Message
 import hashlib
@@ -17,7 +17,7 @@ import update_client as updates
 from update_client import GitHubUpdateClient, ReleaseInfo, UpdateCancelled, UpdateError
 
 
-TOKEN = "never-display-or-forward-this-token"
+SECRET_MARKER = "never-display-or-forward-this-token"
 DATA = b"a simulated update executable\x00\x01"
 BASE = "https://api.github.com"
 REPO = f"/repos/{updates.REPOSITORY}"
@@ -44,6 +44,10 @@ class Opener:
 
     def open(self, request, timeout):
         self.requests.append(request)
+        if request.get_header("Authorization") is not None:
+            raise AssertionError("Anonymous update requests must never carry Authorization")
+        if request.get_header("Cookie") is not None:
+            raise AssertionError("Anonymous update requests must never carry account cookies")
         if not self.responses:
             raise AssertionError("Unexpected HTTP request")
         expected, result = self.responses.pop(0)
@@ -73,10 +77,9 @@ def release(version="1.0.2", platform="windows-x64", **changes):
     return result
 
 
-def check_opener(releases, *, private=True, account="approved-user"):
+def check_opener(releases, *, private=False, full_name=updates.REPOSITORY):
     return Opener([
-        (BASE + "/user", json_response({"login": account})),
-        (BASE + REPO, json_response({"private": private, "full_name": updates.REPOSITORY})),
+        (BASE + REPO, json_response({"private": private, "full_name": full_name})),
         (BASE + REPO + "/releases?per_page=100&page=1", json_response(releases)),
     ])
 
@@ -94,45 +97,46 @@ class ReleaseCheckTests(unittest.TestCase):
         first += [release("1.0.0", draft=True) for _ in range(97)]
         opener = check_opener(first)
         opener.responses.append((BASE + REPO + "/releases?per_page=100&page=2", json_response([release("1.10.0")])))
-        result = GitHubUpdateClient(TOKEN, opener=opener).check("1.9.0")
-        self.assertEqual((result.status, result.release.version, result.username), ("available", "1.10.0", "approved-user"))
+        result = GitHubUpdateClient(opener=opener).check("1.9.0")
+        self.assertEqual((result.status, result.release.version, result.username), ("available", "1.10.0", ""))
         self.assertEqual(result.release.html_url, updates.REPOSITORY_URL + "/releases/tag/v1.10.0")
         self.assertTrue(result.checked_at.endswith("Z"))
-        self.assertEqual(len(opener.requests), 4)
+        self.assertEqual(len(opener.requests), 3)
         for request in opener.requests:
-            self.assertEqual(request.get_header("Authorization"), "Bearer " + TOKEN)
+            self.assertIsNone(request.get_header("Authorization"))
+            self.assertNotEqual(request.full_url, BASE + "/user")
 
     def test_empty_and_incompatible_are_not_current(self):
         for items, expected in [([], "no_releases"), ([release(platform="linux-x64")], "no_compatible"),
                                 ([release("9.0.0", prerelease=True)], "no_releases")]:
             with self.subTest(status=expected):
-                result = GitHubUpdateClient(TOKEN, opener=check_opener(items)).check("1.0.1")
+                result = GitHubUpdateClient(opener=check_opener(items)).check("1.0.1")
                 self.assertEqual(result.status, expected)
                 self.assertIsNone(result.release)
 
     def test_no_windows_package_is_offered_on_linux(self):
-        result = GitHubUpdateClient(TOKEN, opener=check_opener([release()])).check("1.0.1", "linux-x64")
+        result = GitHubUpdateClient(opener=check_opener([release()])).check("1.0.1", "linux-x64")
         self.assertEqual(result.status, "no_compatible")
-        result = GitHubUpdateClient(TOKEN, opener=check_opener([release(platform="linux-x64")])).check("1.0.1", "linux-x64")
+        result = GitHubUpdateClient(opener=check_opener([release(platform="linux-x64")])).check("1.0.1", "linux-x64")
         self.assertEqual(result.status, "available")
         self.assertTrue(result.release.asset_name.endswith("Linux-x64.tar.gz"))
 
     def test_current_requires_an_eligible_verified_release(self):
         for installed in ("1.0.2", "1.1.0"):
-            result = GitHubUpdateClient(TOKEN, opener=check_opener([release()])).check(installed)
+            result = GitHubUpdateClient(opener=check_opener([release()])).check(installed)
             self.assertEqual(result.status, "current")
 
     def test_tag_filename_version_mismatch_is_incompatible(self):
         mismatch = release("1.0.2")
         mismatch["assets"][0]["name"] = "OpticalDesignStudio-Setup-1.0.3-Windows-x64.exe"
-        result = GitHubUpdateClient(TOKEN, opener=check_opener([mismatch])).check("1.0.1")
+        result = GitHubUpdateClient(opener=check_opener([mismatch])).check("1.0.1")
         self.assertEqual(result.status, "no_compatible")
 
     def test_missing_digest_does_not_silently_fall_back_to_old_release(self):
         newest = release("1.0.3")
         newest["assets"][0].pop("digest")
         with self.assertRaises(UpdateError) as caught:
-            GitHubUpdateClient(TOKEN, opener=check_opener([release(), newest])).check("1.0.1")
+            GitHubUpdateClient(opener=check_opener([release(), newest])).check("1.0.1")
         self.assertEqual(caught.exception.code, "integrity_metadata")
 
     def test_missing_or_oversized_or_unuploaded_assets_are_rejected(self):
@@ -141,51 +145,72 @@ class ReleaseCheckTests(unittest.TestCase):
                 item = release()
                 item["assets"][0][key] = value
                 with self.assertRaises(UpdateError) as caught:
-                    GitHubUpdateClient(TOKEN, opener=check_opener([item])).check("1.0.1")
+                    GitHubUpdateClient(opener=check_opener([item])).check("1.0.1")
                 self.assertEqual(caught.exception.code, "invalid_asset")
 
-    def test_private_repository_is_required_before_listing(self):
-        opener = check_opener([], private=False)
-        with self.assertRaises(UpdateError) as caught:
-            GitHubUpdateClient(TOKEN, opener=opener).check("1.0.1")
-        self.assertEqual(caught.exception.code, "repository_not_private")
-        self.assertEqual(len(opener.requests), 2)
+    def test_public_repository_is_required_before_listing(self):
+        for private in (True, None, "false", 0):
+            with self.subTest(private=private):
+                opener = check_opener([], private=private)
+                with self.assertRaises(UpdateError) as caught:
+                    GitHubUpdateClient(opener=opener).check("1.0.1")
+                self.assertEqual(caught.exception.code, "repository_not_public")
+                self.assertEqual(len(opener.requests), 1)
 
-    def test_auth_missing_access_rate_limit_and_network_never_become_current(self):
-        for status, expected in [(401, "authentication"), (404, "access_denied"), (403, "access_denied"), (429, "rate_limit")]:
-            opener = Opener([(BASE + "/user", HTTPError(BASE + "/user", status, TOKEN, headers(), io.BytesIO(TOKEN.encode())))])
+    def test_unavailable_rate_limit_and_network_errors_never_become_current(self):
+        for status, expected in [(401, "access_denied"), (404, "access_denied"), (403, "access_denied"), (429, "rate_limit")]:
+            opener = Opener([(BASE + REPO, HTTPError(BASE + REPO, status, SECRET_MARKER, headers(), io.BytesIO(SECRET_MARKER.encode())))])
             with self.subTest(status=status), self.assertRaises(UpdateError) as caught:
-                GitHubUpdateClient(TOKEN, opener=opener).check("1.0.1")
+                GitHubUpdateClient(opener=opener).check("1.0.1")
             self.assertEqual(caught.exception.code, expected)
-            self.assertNotIn(TOKEN, str(caught.exception))
-        opener = Opener([(BASE + "/user", URLError("secret=" + TOKEN))])
+            self.assertNotIn(SECRET_MARKER, str(caught.exception))
+            self.assertNotIn("Sign in", str(caught.exception))
+        opener = Opener([(BASE + REPO, URLError("secret=" + SECRET_MARKER))])
         with self.assertRaises(UpdateError) as caught:
-            GitHubUpdateClient(TOKEN, opener=opener).check("1.0.1")
+            GitHubUpdateClient(opener=opener).check("1.0.1")
         self.assertEqual(caught.exception.code, "network")
-        self.assertNotIn(TOKEN, str(caught.exception))
+        self.assertNotIn(SECRET_MARKER, str(caught.exception))
+
+    def test_anonymous_rate_limit_is_clear_for_403_and_429(self):
+        for status in (403, 429):
+            opener = Opener([(BASE + REPO, Response(status=status, response_headers=headers(X_RateLimit_Remaining=0)))])
+            with self.subTest(status=status), self.assertRaises(UpdateError) as caught:
+                GitHubUpdateClient(opener=opener).check("1.0.1")
+            self.assertEqual(caught.exception.code, "rate_limit")
+            self.assertIn("anonymous request limit", str(caught.exception))
+            self.assertIn("no access key is required", str(caught.exception))
+
+    def test_secondary_rate_limit_with_remaining_requests_is_not_access_denied(self):
+        for retry_after, expected in (("60", "rate_limit"), (" 60 ", "rate_limit"), ("invalid", "access_denied")):
+            response = Response(status=403, response_headers=headers(Retry_After=retry_after, X_RateLimit_Remaining=50))
+            opener = Opener([(BASE + REPO, response)])
+            with self.subTest(retry_after=retry_after), self.assertRaises(UpdateError) as caught:
+                GitHubUpdateClient(opener=opener).check("1.0.1")
+            self.assertEqual(caught.exception.code, expected)
+            self.assertTrue(response.closed)
 
     def test_releases_404_is_not_empty(self):
         opener = check_opener([])
         url, _ = opener.responses[-1]
         opener.responses[-1] = (url, Response(status=404))
         with self.assertRaises(UpdateError) as caught:
-            GitHubUpdateClient(TOKEN, opener=opener).check("1.0.1")
+            GitHubUpdateClient(opener=opener).check("1.0.1")
         self.assertEqual(caught.exception.code, "access_denied")
 
-    def test_json_redirect_is_not_followed_with_credentials(self):
-        opener = Opener([(BASE + "/user", Response(status=302, response_headers=headers(Location="https://evil.example/")))])
+    def test_unexpected_json_redirect_is_not_followed(self):
+        opener = Opener([(BASE + REPO, Response(status=302, response_headers=headers(Location="https://evil.example/")))])
         with self.assertRaises(UpdateError):
-            GitHubUpdateClient(TOKEN, opener=opener).check("1.0.1")
+            GitHubUpdateClient(opener=opener).check("1.0.1")
         self.assertEqual(len(opener.requests), 1)
 
     def test_incomplete_json_response_becomes_safe_network_error(self):
         response = Response()
-        response.read1 = lambda count: (_ for _ in ()).throw(IncompleteRead(TOKEN.encode(), 99))
-        opener = Opener([(BASE + "/user", response)])
+        response.read1 = lambda count: (_ for _ in ()).throw(IncompleteRead(SECRET_MARKER.encode(), 99))
+        opener = Opener([(BASE + REPO, response)])
         with self.assertRaises(UpdateError) as caught:
-            GitHubUpdateClient(TOKEN, opener=opener).check("1.0.1")
+            GitHubUpdateClient(opener=opener).check("1.0.1")
         self.assertEqual(caught.exception.code, "network")
-        self.assertNotIn(TOKEN, str(caught.exception))
+        self.assertNotIn(SECRET_MARKER, str(caught.exception))
         self.assertTrue(response.closed)
 
     def test_json_stream_checks_cancel_between_available_chunks(self):
@@ -194,30 +219,30 @@ class ReleaseCheckTests(unittest.TestCase):
 
         def first_chunk(size):
             event.set()
-            return b'{"login":'
+            return b'{"full_name":'
 
         response.read = lambda size: self.fail("A buffered read delays cancellation")
         response.read1 = first_chunk
-        opener = Opener([(BASE + "/user", response)])
+        opener = Opener([(BASE + REPO, response)])
         with self.assertRaises(UpdateCancelled):
-            GitHubUpdateClient(TOKEN, opener=opener).check("1.0.1", cancel=event)
+            GitHubUpdateClient(opener=opener).check("1.0.1", cancel=event)
         self.assertTrue(response.closed)
 
     def test_streamed_json_remains_size_bounded(self):
         response = Response(b" " * 33)
-        opener = Opener([(BASE + "/user", response)])
+        opener = Opener([(BASE + REPO, response)])
         with patch.object(updates, "_MAX_JSON_BYTES", 32):
             with self.assertRaises(UpdateError) as caught:
-                GitHubUpdateClient(TOKEN, opener=opener).check("1.0.1")
+                GitHubUpdateClient(opener=opener).check("1.0.1")
         self.assertEqual(caught.exception.code, "invalid_response")
         self.assertTrue(response.closed)
 
-    def test_invalid_account_names_stop_before_repository_access(self):
-        for account in ("", "x" * 40, "not an account", "abc--def", "-abc", "abc-", "é", "<script>"):
-            with self.subTest(account=account):
-                opener = check_opener([], account=account)
+    def test_other_or_missing_repository_identity_stops_before_listing(self):
+        for full_name in ("", None, "someone/optical-design-studio-downloads", "Wgeshow/optical-design-studio-updates"):
+            with self.subTest(full_name=full_name):
+                opener = check_opener([], full_name=full_name)
                 with self.assertRaises(UpdateError) as caught:
-                    GitHubUpdateClient(TOKEN, opener=opener).check("1.0.1")
+                    GitHubUpdateClient(opener=opener).check("1.0.1")
                 self.assertEqual(caught.exception.code, "invalid_response")
                 self.assertEqual(len(opener.requests), 1)
 
@@ -226,15 +251,16 @@ class ReleaseCheckTests(unittest.TestCase):
         opener.responses[-1] = (BASE + REPO + "/releases?per_page=1&page=1", json_response([release()]))
         with patch.object(updates, "_PAGE_SIZE", 1), patch.object(updates, "_MAX_PAGES", 1):
             with self.assertRaises(UpdateError) as caught:
-                GitHubUpdateClient(TOKEN, opener=opener).check("1.0.2")
+                GitHubUpdateClient(opener=opener).check("1.0.2")
         self.assertEqual(caught.exception.code, "listing_limit")
 
     def test_invalid_inputs_and_cancel_make_no_requests(self):
         opener = Opener([])
-        for invalid_token in ("bad\nheader", "x" * 2049):
-            with self.subTest(token_length=len(invalid_token)), self.assertRaises(UpdateError):
-                GitHubUpdateClient(invalid_token, opener=opener)
-        client = GitHubUpdateClient(TOKEN, opener=opener)
+        for timeout in (0, -1, 121, float("nan"), float("inf"), "invalid", None):
+            with self.subTest(timeout=timeout), self.assertRaises(UpdateError) as caught:
+                GitHubUpdateClient(timeout=timeout, opener=opener)
+            self.assertEqual(caught.exception.code, "configuration")
+        client = GitHubUpdateClient(opener=opener)
         with self.assertRaises(UpdateError):
             client.check("latest")
         with self.assertRaises(UpdateError):
@@ -258,7 +284,7 @@ class DownloadTests(unittest.TestCase):
 
     def direct_client(self, data=DATA, response_headers=None):
         opener = Opener([(self.api_url, Response(data, response_headers=response_headers))])
-        return GitHubUpdateClient(TOKEN, opener=opener), opener
+        return GitHubUpdateClient(opener=opener), opener
 
     def assert_directory_clean(self, existing=None):
         self.assertEqual(set(self.directory.iterdir()), set(existing or []))
@@ -274,15 +300,39 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(opener.requests[0].get_header("Accept"), "application/octet-stream")
         self.assert_directory_clean([target])
 
-    def test_private_asset_redirects_strip_authorization_and_api_headers(self):
-        for status in (302, 307):
+    def test_check_and_download_ignore_environment_credentials(self):
+        self.assertEqual(updates.REPOSITORY, "Wgeshow/optical-design-studio-downloads")
+        target_url = "https://release-assets.githubusercontent.com/github-production-release-asset/123/package?signature=example"
+        opener = check_opener([release()])
+        opener.responses.extend([
+            (self.api_url, Response(status=302, response_headers=headers(Location=target_url))),
+            (target_url, Response(DATA)),
+        ])
+        with patch.dict(os.environ, {"GITHUB_TOKEN": SECRET_MARKER, "GH_TOKEN": SECRET_MARKER}):
+            client = GitHubUpdateClient(opener=opener)
+            result = client.check("1.0.1")
+            saved = client.download(result.release, self.directory)
+        self.assertEqual(result.username, "")
+        self.assertEqual(saved.read_bytes(), DATA)
+        self.assertEqual(len(opener.requests), 4)
+        self.assertFalse(hasattr(client, "_token"))
+        for request in opener.requests:
+            self.assertIsNone(request.get_header("Authorization"))
+            self.assertIsNone(request.get_header("Cookie"))
+            self.assertNotIn(SECRET_MARKER, str(request.header_items()))
+            self.assertNotIn("/user", request.full_url)
+        self.assertEqual(opener.responses, [])
+
+    def test_asset_redirects_are_anonymous_and_omit_api_headers(self):
+        for status in (302, 303, 307, 308):
             with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
                 target_url = "https://release-assets.githubusercontent.com/github-production-release-asset/123/file?signature=private"
                 opener = Opener([(self.api_url, HTTPError(self.api_url, status, "redirect", headers(Location=target_url), io.BytesIO())),
                                  (target_url, Response(DATA))])
-                result = GitHubUpdateClient(TOKEN, opener=opener).download(self.info, directory)
+                result = GitHubUpdateClient(opener=opener).download(self.info, directory)
                 self.assertEqual(result.read_bytes(), DATA)
-                self.assertEqual(opener.requests[0].get_header("Authorization"), "Bearer " + TOKEN)
+                self.assertIsNone(opener.requests[0].get_header("Authorization"))
+                self.assertEqual(opener.requests[0].get_header("X-github-api-version"), "2022-11-28")
                 self.assertIsNone(opener.requests[1].get_header("Authorization"))
                 self.assertIsNone(opener.requests[1].get_header("X-github-api-version"))
 
@@ -297,7 +347,7 @@ class DownloadTests(unittest.TestCase):
             with self.subTest(url=url):
                 opener = Opener([(self.api_url, Response(status=302, response_headers=headers(Location=url)))])
                 with self.assertRaises(UpdateError):
-                    GitHubUpdateClient(TOKEN, opener=opener).download(self.info, self.directory)
+                    GitHubUpdateClient(opener=opener).download(self.info, self.directory)
                 self.assertEqual(len(opener.requests), 1)
                 self.assert_directory_clean()
 
@@ -319,12 +369,12 @@ class DownloadTests(unittest.TestCase):
 
     def test_interrupted_stream_is_reported_safely_and_discarded(self):
         response = Response()
-        response.read1 = lambda count: (_ for _ in ()).throw(IncompleteRead(TOKEN.encode(), 99))
+        response.read1 = lambda count: (_ for _ in ()).throw(IncompleteRead(SECRET_MARKER.encode(), 99))
         opener = Opener([(self.api_url, response)])
         with self.assertRaises(UpdateError) as caught:
-            GitHubUpdateClient(TOKEN, opener=opener).download(self.info, self.directory)
+            GitHubUpdateClient(opener=opener).download(self.info, self.directory)
         self.assertEqual(caught.exception.code, "download_failed")
-        self.assertNotIn(TOKEN, str(caught.exception))
+        self.assertNotIn(SECRET_MARKER, str(caught.exception))
         self.assertTrue(response.closed)
         self.assert_directory_clean()
 
@@ -332,12 +382,12 @@ class DownloadTests(unittest.TestCase):
         response = Response(DATA)
         response.read = lambda size: self.fail("A buffered read delays cancellation")
         opener = Opener([(self.api_url, response)])
-        path = GitHubUpdateClient(TOKEN, opener=opener).download(self.info, self.directory)
+        path = GitHubUpdateClient(opener=opener).download(self.info, self.directory)
         self.assertEqual(path.read_bytes(), DATA)
         fallback = Response(DATA)
         fallback.read1 = None
         opener = Opener([(self.api_url, fallback)])
-        second = GitHubUpdateClient(TOKEN, opener=opener).download(self.info, self.directory)
+        second = GitHubUpdateClient(opener=opener).download(self.info, self.directory)
         self.assertEqual(second.read_bytes(), DATA)
 
     def test_existing_destination_is_preserved_and_new_file_published(self):
@@ -403,7 +453,7 @@ class DownloadTests(unittest.TestCase):
             with self.subTest(item=item):
                 opener = Opener([])
                 with self.assertRaises(UpdateError) as caught:
-                    GitHubUpdateClient(TOKEN, opener=opener).download(item, self.directory)
+                    GitHubUpdateClient(opener=opener).download(item, self.directory)
                 self.assertEqual(caught.exception.code, "invalid_asset")
                 self.assert_directory_clean()
 

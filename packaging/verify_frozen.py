@@ -6,6 +6,8 @@ from pathlib import Path
 import struct
 import subprocess
 
+from public_profile import assert_empty_seed
+
 def pe_machine(path):
     with path.open('rb') as stream:
         if stream.read(2) != b'MZ':
@@ -22,11 +24,19 @@ def main():
     parser.add_argument('application', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--gpu', action='store_true')
-    parser.add_argument('--minimum-saved', type=int, default=97)
+    parser.add_argument('--minimum-saved', type=int, help='Defaults to the payload seed count.')
+    parser.add_argument('--expect-empty-library', action='store_true',
+                        help='Assert that this fresh test starts without runs, presets or material tables.')
     args = parser.parse_args()
     application = args.application.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    manifest_path = application.parent/'PAYLOAD-MANIFEST.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8')) if manifest_path.is_file() else {}
+    if args.minimum_saved is None:
+        args.minimum_saved = manifest.get('build_input', {}).get('seed_runs', 97)
+    if manifest.get('delivery_profile') == 'public':
+        assert_empty_seed(application.parent/'_internal'/'seed_library.zip')
     artifacts = {}
     for relative in ['Optical Design Studio.exe', 'OpticalDesignBackend.exe',
                      '_internal/python312.dll', '_internal/pcs_s4_runtime/S4.cp312-win_amd64.pyd',
@@ -45,6 +55,7 @@ def main():
     env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
     env['S4_LIBRARY_ROOT'] = str(output/'User Data')
     env['S4_SELF_TEST_MIN_SAVED_ENTRIES'] = str(args.minimum_saved)
+    env['S4_SELF_TEST_EXPECT_EMPTY_LIBRARY'] = '1' if args.expect_empty_library else '0'
     env['S4_SELF_TEST_GPU'] = '1' if args.gpu else '0'
     env['QT_QPA_PLATFORM'] = 'offscreen'
     report = output/'report.json'

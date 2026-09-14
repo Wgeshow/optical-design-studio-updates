@@ -2,10 +2,11 @@
 
 ## Windows installer
 
-Run **OpticalDesignStudio-Setup-1.0.2-Windows-x64.exe**, choose an installation
+Run **OpticalDesignStudio-Setup-1.0.3-Windows-x64.exe**, choose an installation
 folder, and complete the setup wizard. The installer and application are native
-64-bit. Python, PyQt6, S4, machine-learning dependencies, GPU runtime libraries,
-and the shared material/results library are included for offline installation.
+64-bit. Python, PyQt6, S4, machine-learning dependencies, and GPU runtime libraries
+are included for offline installation. Public packages start with an empty
+saved-work library and do not include the development machine's research data.
 No separate Python, Conda, or CUDA Toolkit installation is needed. GPU use
 requires compatible NVIDIA hardware and its driver.
 
@@ -15,11 +16,12 @@ updates and uninstalling. The program's installation folder can be selected
 independently. See the installed **INSTALLATION.md** for instructions, and
 **_internal/source/packaging/BUILDING.md** for rebuilding the installer.
 
-Version 1.0.2 adds **About**, with version/date information, private GitHub
-release checks and verified update downloads. Open and Save are in the **File**
+Version 1.0.3 makes **About → Check for updates** work without a GitHub account,
+access key, or sign-in. It reads the public installer repository and verifies
+update downloads. Open and Save are in the **File**
 menu, with **Ctrl+O / Ctrl+S**; duplicate title-bar buttons were removed. View
-provides appearance choices. Downloads use your own authorized GitHub token;
-you choose when to run the downloaded installer. See [UPDATES.md](UPDATES.md).
+provides appearance choices. You choose when to run the downloaded installer.
+The development repository remains private. See [UPDATES.md](UPDATES.md).
 
 ## Native PyQt6 desktop
 
