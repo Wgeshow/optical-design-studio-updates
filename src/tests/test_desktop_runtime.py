@@ -51,7 +51,7 @@ class DesktopRuntimeTests(unittest.TestCase):
 
     def test_library_argument_beats_environment_and_installed_default_is_writable_user_data(self):
         with patch.object(sys, 'frozen', True, create=True), patch.dict(os.environ, {'LOCALAPPDATA': str(self.root / 'local')}, clear=True):
-            self.assertEqual(runtime.library_root([]), (self.root / 'local' / 'Optical Design Studio' / 'User Data').resolve())
+            self.assertEqual(runtime.library_root([]), runtime.default_data_directory())
             os.environ['S4_LIBRARY_ROOT'] = str(self.root / 'environment')
             self.assertEqual(runtime.library_root([]), (self.root / 'environment').resolve())
             self.assertEqual(runtime.initialize_desktop(['--library', str(self.user), '--theme', 'dark']), self.user.resolve())
@@ -112,6 +112,34 @@ class DesktopRuntimeTests(unittest.TestCase):
             os.environ['S4_CUBLAS_LIBRARY'] = 'explicit-user-runtime.dll'
             bootstrap.initialize(1)
             self.assertEqual(os.environ['S4_CUBLAS_LIBRARY'], 'explicit-user-runtime.dll')
+
+    def test_portable_directory_selection_persists_and_reset_moves_with_application(self):
+        app = self.resources.parent
+        old = self.root / 'existing data'
+        old.mkdir()
+        (old/'result.csv').write_text('saved result')
+        with patch.object(runtime, 'application_root', return_value=app), patch.dict(os.environ, {}, clear=True), patch.object(sys, 'frozen', True, create=True):
+            self.assertEqual(runtime.library_root([]), app/'User Data')
+            runtime.save_data_directory(old)
+            self.assertEqual(runtime.library_root([]), old)
+            self.assertEqual((old/'result.csv').read_text(), 'saved result')
+            runtime.save_data_directory()
+            self.assertEqual(json.loads((app/'portable_settings.json').read_text())['data_directory'], 'User Data')
+            self.assertEqual(runtime.library_root([]), app/'User Data')
+            moved = self.root/'moved app'
+            shutil.copytree(app, moved)
+            with patch.object(runtime, 'application_root', return_value=moved):
+                self.assertEqual(runtime.library_root([]), moved/'User Data')
+
+    def test_failed_storage_selection_preserves_existing_configuration(self):
+        with patch.object(runtime, 'application_root', return_value=self.resources.parent):
+            runtime.save_data_directory(self.user)
+            before = (self.resources.parent/'portable_settings.json').read_bytes()
+            file = self.root/'not a folder'
+            file.write_text('do not replace')
+            with self.assertRaises(OSError):
+                runtime.save_data_directory(file)
+            self.assertEqual((self.resources.parent/'portable_settings.json').read_bytes(), before)
 
 
 if __name__ == '__main__':
