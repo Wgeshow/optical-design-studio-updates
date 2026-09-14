@@ -1,0 +1,46 @@
+# Future development checks. This workflow reads source and runs pure standard-
+# library tests only; it cannot publish releases, push branches, or install the app.
+name: Test update features
+
+'on':
+  push:
+    branches: [test]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-update-features-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      # Official actions/checkout v4.4.0.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      # Official actions/setup-python v6.3.0.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Test private update client
+        run: python -m unittest discover -s tests -p test_update_client.py -v
+      - name: Test credential handling without accessing real credentials
+        run: python -m unittest discover -s tests -p test_update_credentials.py -v
+      - name: Test application version receipt
+        run: python -m unittest discover -s tests -p test_app_version.py -v
